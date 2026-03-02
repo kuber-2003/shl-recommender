@@ -1,42 +1,23 @@
-"""
-SHL Assessment Recommendation Engine
-Uses FAISS for retrieval + Gemini for re-ranking and query understanding.
-"""
-
-import os
-import json
-import pickle
-import re
+import os, json, pickle, re
 import numpy as np
-import faiss
-from sentence_transformers import SentenceTransformer
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.metrics.pairwise import cosine_similarity
 import google.generativeai as genai
 
-# ── Config ────────────────────────────────────────────────────────────────────
 DATA_DIR = os.path.join(os.path.dirname(__file__), "../data")
-INDEX_FILE = os.path.join(DATA_DIR, "faiss_index.bin")
 META_FILE = os.path.join(DATA_DIR, "assessments_meta.pkl")
-
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
 GEMINI_MODEL = "gemini-1.5-flash"
-
-RETRIEVAL_TOP_K = 25   # Retrieve top 25 from FAISS, re-rank to top 10
+RETRIEVAL_TOP_K = 25
 FINAL_TOP_K = 10
 
 TEST_TYPE_MAP = {
-    "A": "Ability & Aptitude",
-    "B": "Biodata & Situational Judgement",
-    "C": "Competencies",
-    "D": "Development & 360",
-    "E": "Assessment Exercises",
-    "K": "Knowledge & Skills",
-    "P": "Personality & Behavior",
-    "S": "Simulations",
+    "A": "Ability & Aptitude", "B": "Biodata & Situational Judgement",
+    "C": "Competencies", "D": "Development & 360", "E": "Assessment Exercises",
+    "K": "Knowledge & Skills", "P": "Personality & Behavior", "S": "Simulations",
 }
 
-# ── Singleton loader ──────────────────────────────────────────────────────────
 _engine = None
-
 
 def get_engine():
     global _engine
@@ -44,190 +25,115 @@ def get_engine():
         _engine = RecommendationEngine()
     return _engine
 
-
-# ── Engine ────────────────────────────────────────────────────────────────────
 class RecommendationEngine:
     def __init__(self):
-        print("Loading FAISS index and metadata...")
-        self.index = faiss.read_index(INDEX_FILE)
-
+        print("Loading assessment data...")
         with open(META_FILE, "rb") as f:
             meta = pickle.load(f)
-
         self.assessments = meta["assessments"]
         self.documents = meta["documents"]
 
-        print(f"Loading embedding model: {meta['model_name']}...")
-        self.embed_model = SentenceTransformer(meta["model_name"])
+        print("Building TF-IDF index...")
+        self.vectorizer = TfidfVectorizer(
+            ngram_range=(1, 2),
+            max_features=15000,
+            stop_words="english",
+            sublinear_tf=True,
+        )
+        self.tfidf_matrix = self.vectorizer.fit_transform(self.documents)
 
         if GEMINI_API_KEY:
             genai.configure(api_key=GEMINI_API_KEY)
             self.llm = genai.GenerativeModel(GEMINI_MODEL)
-            print(f"Gemini model: {GEMINI_MODEL} ✓")
+            print(f"Gemini {GEMINI_MODEL} ready")
         else:
             self.llm = None
-            print("WARNING: GEMINI_API_KEY not set — running without LLM re-ranking")
-
         print(f"Engine ready. {len(self.assessments)} assessments indexed.")
 
-    def _expand_query(self, query: str) -> str:
-        """
-        Use Gemini to extract key skills, test types, and duration constraints
-        from the user query, returning an enriched search string.
-        """
+    def _expand_query(self, query):
         if not self.llm:
             return query
+        prompt = f"""You are an HR assessment expert. Given this hiring query, extract:
+1. Technical skills (e.g. Python, Java, SQL)
+2. Soft skills (e.g. communication, leadership)  
+3. Cognitive requirements (e.g. numerical reasoning, verbal ability)
+4. Job domain and seniority level
 
-        prompt = f"""You are an expert in HR assessments and psychometric testing.
+Return a concise 2-3 sentence enriched search query including assessment keywords like "knowledge test", "personality assessment", "aptitude test", "situational judgment".
 
-Given this hiring query or job description, extract and list:
-1. Technical skills required (e.g., Python, Java, SQL)
-2. Soft skills required (e.g., communication, leadership, teamwork)
-3. Cognitive/aptitude requirements (e.g., numerical reasoning, verbal ability)
-4. Duration constraints (in minutes, if mentioned)
-5. Seniority level (entry/mid/senior/graduate)
-6. Job domain (e.g., sales, engineering, finance, customer service)
+Query: {query[:2000]}
 
-Return a concise enriched search query (2-4 sentences) that captures ALL these aspects for finding relevant psychometric assessments. Include relevant assessment keywords like "knowledge test", "personality assessment", "aptitude", "situational judgment" etc.
-
-Query:
-{query[:3000]}
-
-Enriched search query:"""
-
+Enriched query:"""
         try:
-            response = self.llm.generate_content(prompt)
-            expanded = response.text.strip()
-            # Combine original + expanded for better recall
-            return f"{query[:500]} {expanded}"
-        except Exception as e:
-            print(f"Gemini query expansion failed: {e}")
+            return query[:500] + " " + self.llm.generate_content(prompt).text.strip()
+        except:
             return query
 
-    def _rerank_with_llm(self, query: str, candidates: list) -> list:
-        """
-        Use Gemini to re-rank candidates and ensure balance across test types.
-        Returns ordered list of (assessment, score) tuples.
-        """
+    def _rerank_with_llm(self, query, candidates):
         if not self.llm or not candidates:
             return candidates
-
         candidate_list = "\n".join([
-            f"{i+1}. [{a['name']}] Types: {', '.join(a.get('test_type', []))} | "
-            f"Duration: {a.get('duration', 'N/A')} min | {a.get('description', '')[:150]}"
+            f"{i+1}. [{a['name']}] Types: {', '.join(a.get('test_type',[]))} | "
+            f"Duration: {a.get('duration','N/A')} min | {a.get('description','')[:120]}"
             for i, (a, _) in enumerate(candidates)
         ])
-
-        # Extract duration constraint from query
         duration_match = re.search(r"(\d+)\s*min", query, re.I)
-        duration_note = f"Duration constraint: max {duration_match.group(1)} minutes." if duration_match else ""
-
-        prompt = f"""You are an expert HR assessment consultant at SHL.
-
-TASK: Select and rank the BEST 5-10 assessments from the candidates below for this hiring query.
-
+        duration_note = f"Max duration: {duration_match.group(1)} minutes." if duration_match else ""
+        prompt = f"""You are an SHL assessment consultant. Select and rank the BEST 5-10 assessments for this query.
 RULES:
-1. Assessments must be directly relevant to the role and skills mentioned.
-2. {duration_note if duration_note else "No strict duration limit."}
-3. Ensure BALANCE: if the query mentions both technical skills AND soft skills/personality, include assessments from BOTH domains (Knowledge & Skills type AND Personality & Behavior type).
-4. Return ONLY a JSON array of numbers (1-based indices from the list below) in ranked order. Example: [3, 1, 7, 2, 5]
+1. Must be relevant to the role and skills mentioned
+2. {duration_note if duration_note else 'No duration limit.'}
+3. Balance technical (Knowledge & Skills) AND behavioral (Personality & Behavior) if query needs both
+4. Return ONLY a JSON array of 1-based indices e.g. [3,1,7,2,5]
 
-HIRING QUERY:
-{query[:2000]}
+QUERY: {query[:1500]}
 
-CANDIDATE ASSESSMENTS:
+CANDIDATES:
 {candidate_list}
 
-Return ONLY the JSON array of indices (no explanation):"""
-
+JSON array only:"""
         try:
-            response = self.llm.generate_content(prompt)
-            text = response.text.strip()
-            # Parse JSON array
+            text = self.llm.generate_content(prompt).text.strip()
             match = re.search(r"\[[\d,\s]+\]", text)
             if match:
                 indices = json.loads(match.group())
-                # Validate and deduplicate
-                seen = set()
-                reranked = []
+                seen, reranked = set(), []
                 for idx in indices:
                     if 1 <= idx <= len(candidates) and idx not in seen:
                         seen.add(idx)
-                        reranked.append(candidates[idx - 1])
+                        reranked.append(candidates[idx-1])
                 return reranked[:FINAL_TOP_K]
         except Exception as e:
-            print(f"Gemini re-ranking failed: {e}")
-
+            print(f"Rerank failed: {e}")
         return candidates[:FINAL_TOP_K]
 
-    def _apply_duration_filter(self, candidates: list, query: str) -> list:
-        """Filter out assessments that exceed explicit duration constraints."""
-        duration_match = re.search(r"(?:max|maximum|within|less than|under|at most)\s*(\d+)\s*min", query, re.I)
-        if not duration_match:
-            # Also check plain "X minutes"
-            duration_match = re.search(r"(\d+)\s*min(?:utes?)?\s*(?:long|limit|cap)?", query, re.I)
-
-        if not duration_match:
+    def _duration_filter(self, candidates, query):
+        m = re.search(r"(?:max|within|less than|under|at most)\s*(\d+)\s*min", query, re.I)
+        if not m:
+            m = re.search(r"(\d+)\s*min(?:utes?)?\s*(?:long|limit)?", query, re.I)
+        if not m:
             return candidates
+        max_d = int(m.group(1))
+        filtered = [(a,s) for a,s in candidates if not a.get("duration") or a["duration"] <= max_d]
+        return filtered if len(filtered) >= 5 else candidates
 
-        max_duration = int(duration_match.group(1))
-        filtered = [
-            (a, s) for (a, s) in candidates
-            if a.get("duration") is None or a["duration"] <= max_duration
-        ]
-        # If too few results after filtering, relax and return all
-        if len(filtered) < 5:
-            return candidates
-        return filtered
-
-    def recommend(self, query: str, top_k: int = FINAL_TOP_K) -> list:
-        """
-        Main recommendation pipeline:
-        1. Query expansion via Gemini
-        2. FAISS semantic retrieval (top 25)
-        3. Duration filtering
-        4. LLM re-ranking for relevance and balance
-        """
-        # Step 1: Expand query
-        expanded_query = self._expand_query(query)
-
-        # Step 2: Embed and retrieve
-        query_embedding = self.embed_model.encode(
-            [expanded_query],
-            normalize_embeddings=True,
-        ).astype(np.float32)
-
-        scores, indices = self.index.search(query_embedding, RETRIEVAL_TOP_K)
-        scores = scores[0]
-        indices = indices[0]
-
-        candidates = [
-            (self.assessments[idx], float(scores[i]))
-            for i, idx in enumerate(indices)
-            if idx < len(self.assessments)
-        ]
-
-        # Step 3: Duration filter
-        candidates = self._apply_duration_filter(candidates, query)
-
-        # Step 4: LLM re-ranking
+    def recommend(self, query, top_k=FINAL_TOP_K):
+        expanded = self._expand_query(query)
+        query_vec = self.vectorizer.transform([expanded])
+        scores = cosine_similarity(query_vec, self.tfidf_matrix)[0]
+        top_indices = scores.argsort()[::-1][:RETRIEVAL_TOP_K]
+        candidates = [(self.assessments[i], float(scores[i])) for i in top_indices]
+        candidates = self._duration_filter(candidates, query)
         final = self._rerank_with_llm(query, candidates)
-
-        # Format output
         results = []
         for item in final[:top_k]:
-            if isinstance(item, tuple):
-                assessment, score = item
-            else:
-                assessment = item
+            a = item[0] if isinstance(item, tuple) else item
             results.append({
-                "name": assessment.get("name", ""),
-                "url": assessment.get("url", ""),
-                "description": assessment.get("description", ""),
-                "duration": assessment.get("duration"),
-                "remote_support": assessment.get("remote_support", "No"),
-                "adaptive_support": assessment.get("adaptive_support", "No"),
-                "test_type": assessment.get("test_type", []),
+                "name": a.get("name",""), "url": a.get("url",""),
+                "description": a.get("description",""),
+                "duration": a.get("duration"),
+                "remote_support": a.get("remote_support","No"),
+                "adaptive_support": a.get("adaptive_support","No"),
+                "test_type": a.get("test_type",[]),
             })
-
         return results
