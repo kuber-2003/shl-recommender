@@ -1,0 +1,460 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>SHL Assessment Recommender</title>
+  <style>
+    :root {
+      --shl-blue: #003366;
+      --shl-teal: #00a9a5;
+      --shl-light: #f5f7fa;
+      --shl-border: #e1e8f0;
+      --text: #1a2733;
+      --muted: #5a6b7a;
+      --success: #00875a;
+      --tag-bg: #e8f4f4;
+      --tag-text: #006b68;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: var(--shl-light);
+      color: var(--text);
+      min-height: 100vh;
+    }
+
+    /* Header */
+    header {
+      background: var(--shl-blue);
+      padding: 0 2rem;
+      display: flex;
+      align-items: center;
+      height: 64px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+    }
+    .logo {
+      font-size: 1.5rem;
+      font-weight: 700;
+      color: white;
+      letter-spacing: 0.5px;
+    }
+    .logo span { color: var(--shl-teal); }
+    .tagline {
+      color: rgba(255,255,255,0.6);
+      margin-left: 1.5rem;
+      font-size: 0.85rem;
+      border-left: 1px solid rgba(255,255,255,0.2);
+      padding-left: 1.5rem;
+    }
+
+    /* Main */
+    main {
+      max-width: 900px;
+      margin: 0 auto;
+      padding: 2.5rem 1.5rem;
+    }
+
+    h1 {
+      font-size: 1.75rem;
+      color: var(--shl-blue);
+      margin-bottom: 0.5rem;
+    }
+    .subtitle {
+      color: var(--muted);
+      margin-bottom: 2rem;
+      font-size: 0.95rem;
+    }
+
+    /* Search box */
+    .search-card {
+      background: white;
+      border-radius: 12px;
+      padding: 1.75rem;
+      box-shadow: 0 2px 12px rgba(0,51,102,0.08);
+      margin-bottom: 2rem;
+    }
+
+    .input-group {
+      display: flex;
+      flex-direction: column;
+      gap: 0.75rem;
+    }
+
+    textarea {
+      width: 100%;
+      min-height: 130px;
+      padding: 0.9rem 1rem;
+      border: 2px solid var(--shl-border);
+      border-radius: 8px;
+      font-size: 0.95rem;
+      font-family: inherit;
+      color: var(--text);
+      resize: vertical;
+      transition: border-color 0.2s;
+      line-height: 1.5;
+    }
+    textarea:focus {
+      outline: none;
+      border-color: var(--shl-teal);
+    }
+    textarea::placeholder { color: #aab4bf; }
+
+    .controls {
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+      flex-wrap: wrap;
+    }
+
+    .btn-primary {
+      background: var(--shl-blue);
+      color: white;
+      border: none;
+      padding: 0.75rem 1.75rem;
+      border-radius: 8px;
+      font-size: 0.95rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.2s, transform 0.1s;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+    .btn-primary:hover { background: #004080; }
+    .btn-primary:active { transform: scale(0.98); }
+    .btn-primary:disabled { background: #8899aa; cursor: not-allowed; }
+
+    .example-queries {
+      display: flex;
+      gap: 0.5rem;
+      flex-wrap: wrap;
+      margin-top: 0.5rem;
+    }
+    .example-btn {
+      background: var(--tag-bg);
+      color: var(--tag-text);
+      border: 1px solid #b2dede;
+      padding: 0.35rem 0.75rem;
+      border-radius: 20px;
+      font-size: 0.8rem;
+      cursor: pointer;
+      transition: background 0.2s;
+      font-family: inherit;
+    }
+    .example-btn:hover { background: #cceeed; }
+
+    /* Status */
+    #status {
+      text-align: center;
+      padding: 1rem;
+      color: var(--muted);
+      font-size: 0.9rem;
+    }
+
+    .spinner {
+      display: inline-block;
+      width: 18px; height: 18px;
+      border: 2px solid #ccc;
+      border-top-color: var(--shl-teal);
+      border-radius: 50%;
+      animation: spin 0.7s linear infinite;
+      vertical-align: middle;
+      margin-right: 0.5rem;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* Results */
+    #results { display: none; }
+
+    .results-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 1rem;
+    }
+    .results-title {
+      font-size: 1.1rem;
+      font-weight: 600;
+      color: var(--shl-blue);
+    }
+    .results-count {
+      background: var(--shl-teal);
+      color: white;
+      padding: 0.2rem 0.6rem;
+      border-radius: 12px;
+      font-size: 0.8rem;
+      font-weight: 600;
+    }
+
+    .assessment-card {
+      background: white;
+      border-radius: 10px;
+      padding: 1.25rem 1.5rem;
+      margin-bottom: 0.85rem;
+      box-shadow: 0 1px 6px rgba(0,51,102,0.07);
+      border-left: 4px solid var(--shl-teal);
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 0.75rem;
+      transition: box-shadow 0.2s;
+    }
+    .assessment-card:hover { box-shadow: 0 4px 16px rgba(0,51,102,0.12); }
+
+    .card-rank {
+      font-size: 0.75rem;
+      font-weight: 700;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      margin-bottom: 0.3rem;
+    }
+
+    .card-name {
+      font-size: 1rem;
+      font-weight: 600;
+      color: var(--shl-blue);
+      margin-bottom: 0.4rem;
+    }
+
+    .card-desc {
+      font-size: 0.85rem;
+      color: var(--muted);
+      line-height: 1.5;
+      margin-bottom: 0.6rem;
+    }
+
+    .card-meta {
+      display: flex;
+      gap: 0.5rem;
+      flex-wrap: wrap;
+      align-items: center;
+    }
+
+    .tag {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.25rem;
+      padding: 0.2rem 0.55rem;
+      border-radius: 4px;
+      font-size: 0.75rem;
+      font-weight: 500;
+    }
+    .tag-type { background: #e8f0fb; color: #1a56c4; }
+    .tag-duration { background: #fff3e0; color: #b35900; }
+    .tag-remote { background: #e6f7f0; color: var(--success); }
+    .tag-adaptive { background: #f3e8ff; color: #6b21a8; }
+
+    .card-actions {
+      display: flex;
+      flex-direction: column;
+      align-items: flex-end;
+      gap: 0.5rem;
+    }
+
+    .btn-link {
+      background: var(--shl-blue);
+      color: white;
+      text-decoration: none;
+      padding: 0.45rem 1rem;
+      border-radius: 6px;
+      font-size: 0.82rem;
+      font-weight: 600;
+      white-space: nowrap;
+      transition: background 0.2s;
+    }
+    .btn-link:hover { background: #004080; }
+
+    /* Error */
+    .error-box {
+      background: #fff0f0;
+      border: 1px solid #fca5a5;
+      border-radius: 8px;
+      padding: 1rem 1.25rem;
+      color: #c0392b;
+      font-size: 0.9rem;
+    }
+
+    /* Footer */
+    footer {
+      text-align: center;
+      padding: 2rem;
+      color: var(--muted);
+      font-size: 0.8rem;
+    }
+  </style>
+</head>
+<body>
+
+<header>
+  <div class="logo">SHL <span>Recommend</span></div>
+  <div class="tagline">AI-Powered Assessment Finder</div>
+</header>
+
+<main>
+  <h1>Find the Right Assessment</h1>
+  <p class="subtitle">Enter a job description, hiring query, or paste a JD URL to get tailored SHL assessment recommendations.</p>
+
+  <div class="search-card">
+    <div class="input-group">
+      <textarea
+        id="queryInput"
+        placeholder="e.g. 'I need to hire a Java developer who can also collaborate effectively with business teams. Max 40 minutes.'
+
+Or paste a full job description. Or enter a URL to a JD page."
+      ></textarea>
+      <div class="controls">
+        <button class="btn-primary" id="searchBtn" onclick="recommend()">
+          <span>🔍</span> Find Assessments
+        </button>
+      </div>
+      <div>
+        <p style="font-size:0.8rem; color:var(--muted); margin-bottom:0.4rem;">Try an example:</p>
+        <div class="example-queries">
+          <button class="example-btn" onclick="setExample(0)">Java Developer</button>
+          <button class="example-btn" onclick="setExample(1)">Python + SQL Analyst</button>
+          <button class="example-btn" onclick="setExample(2)">Sales Graduate</button>
+          <button class="example-btn" onclick="setExample(3)">Customer Support</button>
+          <button class="example-btn" onclick="setExample(4)">Product Manager</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="status"></div>
+  <div id="results"></div>
+</main>
+
+<footer>Built for SHL Research Engineer Assessment · Powered by Gemini + FAISS</footer>
+
+<script>
+  const API_BASE = ""; // Set this to your deployed API URL e.g. "https://your-api.onrender.com"
+
+  const EXAMPLES = [
+    "I am hiring for Java developers who can also collaborate effectively with my business teams. Looking for an assessment that can be completed in 40 minutes.",
+    "Looking to hire mid-level professionals who are proficient in Python, SQL and JavaScript. Need an assessment package that can test all skills with max duration of 60 minutes.",
+    "I am looking for new graduates for my sales team. Suggest a 30 min long assessment.",
+    "I want to hire Customer Support executives who are expert in English communication. We are looking for candidates with good listening and interpersonal skills.",
+    "I want to hire a product manager with 3-4 years of work experience and expertise in SDLC, Jira and stakeholder management.",
+  ];
+
+  function setExample(i) {
+    document.getElementById("queryInput").value = EXAMPLES[i];
+  }
+
+  async function recommend() {
+    const query = document.getElementById("queryInput").value.trim();
+    if (!query) {
+      showStatus("⚠️ Please enter a query or job description.", false);
+      return;
+    }
+
+    const btn = document.getElementById("searchBtn");
+    btn.disabled = true;
+    document.getElementById("results").style.display = "none";
+    showStatus('<span class="spinner"></span> Analyzing query and finding best assessments...', true);
+
+    try {
+      const apiUrl = API_BASE ? `${API_BASE}/recommend` : "/recommend";
+      const resp = await fetch(apiUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ query, top_k: 10 }),
+      });
+
+      if (!resp.ok) {
+        const err = await resp.json().catch(() => ({}));
+        throw new Error(err.detail || `API error ${resp.status}`);
+      }
+
+      const data = await resp.json();
+      renderResults(data.recommended_assessments, query);
+      document.getElementById("status").innerHTML = "";
+    } catch (e) {
+      showStatus(`<div class="error-box">❌ Error: ${e.message}<br>Make sure the API is running and CORS is enabled.</div>`, false);
+    } finally {
+      btn.disabled = false;
+    }
+  }
+
+  function showStatus(html, loading) {
+    document.getElementById("status").innerHTML = html;
+  }
+
+  function renderResults(assessments, query) {
+    const container = document.getElementById("results");
+
+    if (!assessments || assessments.length === 0) {
+      container.innerHTML = '<div class="error-box">No assessments found. Try a more specific query.</div>';
+      container.style.display = "block";
+      return;
+    }
+
+    let html = `
+      <div class="results-header">
+        <div class="results-title">Recommended Assessments</div>
+        <div class="results-count">${assessments.length} found</div>
+      </div>
+    `;
+
+    assessments.forEach((a, i) => {
+      const typeColors = ["tag-type"];
+      const typeTags = (a.test_type || []).map(t =>
+        `<span class="tag tag-type">📊 ${t}</span>`
+      ).join("");
+
+      const durationTag = a.duration
+        ? `<span class="tag tag-duration">⏱ ${a.duration} min</span>` : "";
+      const remoteTag = a.remote_support === "Yes"
+        ? `<span class="tag tag-remote">🌐 Remote</span>` : "";
+      const adaptiveTag = a.adaptive_support === "Yes"
+        ? `<span class="tag tag-adaptive">🔄 Adaptive</span>` : "";
+
+      const desc = a.description
+        ? (a.description.length > 200 ? a.description.slice(0, 200) + "…" : a.description)
+        : "";
+
+      html += `
+        <div class="assessment-card">
+          <div>
+            <div class="card-rank">#${i + 1}</div>
+            <div class="card-name">${escapeHtml(a.name)}</div>
+            ${desc ? `<div class="card-desc">${escapeHtml(desc)}</div>` : ""}
+            <div class="card-meta">
+              ${typeTags}
+              ${durationTag}
+              ${remoteTag}
+              ${adaptiveTag}
+            </div>
+          </div>
+          <div class="card-actions">
+            <a href="${escapeHtml(a.url)}" target="_blank" class="btn-link">View →</a>
+          </div>
+        </div>
+      `;
+    });
+
+    container.innerHTML = html;
+    container.style.display = "block";
+    container.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
+
+  function escapeHtml(str) {
+    return String(str || "")
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;");
+  }
+
+  // Allow Enter+Ctrl to submit
+  document.addEventListener("DOMContentLoaded", () => {
+    document.getElementById("queryInput").addEventListener("keydown", (e) => {
+      if (e.key === "Enter" && e.ctrlKey) recommend();
+    });
+  });
+</script>
+</body>
+</html>
